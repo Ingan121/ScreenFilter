@@ -26,7 +26,7 @@
 * 16 colors with Windows palette
 * 16 colors with Windows palette (alt): adjusted to VMware/86Box VGA palette
 * 8 colors
-* 8 colors with darker palette
+* 8 colors with darker palette: UltraVNC palette
 * 8 grays
 * 4 grays
 * Monochrome: black and white
