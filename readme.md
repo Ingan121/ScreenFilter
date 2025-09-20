@@ -6,6 +6,7 @@
 * This is basically the same as VNC client's color depth option. It just filters the colors of the true color desktop screen.
 * Won't work with remote desktop softwares that cannot capture `SetWindowDisplayAffinity` protected windows. This includes almost every remote desktop software that isn't RDP.
 * Also not visible in screen recorders that use GDI BitBlt, DXGI Desktop Duplication, or Windows Graphics Capture APIs. (OBS Studio, ShareX, Xbox Game Bar, Bandicam, etc.)
+* Press Ctrl+Shift+F12, or use the tray icon menu to exit.
 
 ## Supported color modes
 * True color: No filtering
@@ -23,7 +24,7 @@
 * 16 grays
 * 16 colors with EGA palette
 * 16 colors with Windows palette
-* 16 colors with Windows palette (alt)
+* 16 colors with Windows palette (alt): adjusted to VMware/86Box VGA palette
 * 8 colors
 * 8 colors with darker palette
 * 8 grays
