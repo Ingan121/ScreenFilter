@@ -41,8 +41,8 @@
 * Ctrl+Shift+Alt+F9: Update dynamic palette immediately (only in 256 colors with dynamic palette mode)
 
 ## Registry keys
-* `HKEY_CURRENT_USER\Software\Ingan121\ScreenFilter\DynPalInterval`
-	* Type: DWORD
+* `HKEY_CURRENT_USER\Software\Ingan121\ScreenFilter\DynPalInterval` (REG_DWORD)
+	* How often to update the dynamic palette in frames
 	* `0`: Update on every frame (not recommended for performance)
 	* `1`: Never update (only update when Ctrl+Shift+F9 is pressed)
 	* Default: `200` (update every 200 frames)
