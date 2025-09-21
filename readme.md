@@ -6,7 +6,7 @@
 * This is basically the same as VNC client's color depth option. It just filters the colors of the true color desktop screen.
 * Won't work with remote desktop softwares that cannot capture `SetWindowDisplayAffinity` protected windows. This includes almost every remote desktop software that isn't RDP.
 * Also not visible in screen recorders that use GDI BitBlt, DXGI Desktop Duplication, or Windows Graphics Capture APIs. (OBS Studio, ShareX, Xbox Game Bar, Bandicam, etc.)
-* Press Ctrl+Shift+F12, or use the tray icon menu to exit.
+* Press Ctrl+Shift+Alt+F12, or use the tray icon menu to exit.
 
 ## Supported color modes
 * True color: No filtering
@@ -14,7 +14,7 @@
 * High color (15-bit): 5-5-5
 * 256 colors: 3-3-2
 * 256 colors with dithering: 3-3-2 with Bayer dithering
-* 256 colors with dynamic palette: palette is generated from the current screen content in every 30 frames
+* 256 colors with dynamic palette: palette is generated from the current screen content in every 200 frames
 * 256 grays: Just use the Windows built-in grayscale filter if you only want this mode
 * 64 colors: 2-2-2
 * 64 colors with dithering: 2-2-2 with Bayer dithering
@@ -33,3 +33,16 @@
 * Monochrome: black and white
 * Monochrome with dithering: black and white with Bayer dithering
 * Inverted monochrome: inverted black and white
+
+## Shortcuts
+* Ctrl+Shift+Alt+F12: Exit
+* Ctrl+Shift+Alt+F11: Toggle windowed/fullscreen mode
+* Ctrl+Shift+Alt+F10: Cycle color modes
+* Ctrl+Shift+Alt+F9: Update dynamic palette immediately (only in 256 colors with dynamic palette mode)
+
+## Registry keys
+* `HKEY_CURRENT_USER\Software\Ingan121\ScreenFilter\DynPalInterval`
+	* Type: DWORD
+	* `0`: Update on every frame (not recommended for performance)
+	* `1`: Never update (only update when Ctrl+Shift+F9 is pressed)
+	* Default: `200` (update every 200 frames)
