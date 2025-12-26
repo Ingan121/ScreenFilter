@@ -308,16 +308,16 @@ float4 PS(VS_OUTPUT input) : SV_TARGET{
 		return float4(col, 1);
 	case 1: // 16 bit color (5-6-5)
 	{
-		float r = floor(col.r * 31.0 + 0.5) / 31.0;
-		float g = floor(col.g * 63.0 + 0.5) / 63.0;
-		float b = floor(col.b * 31.0 + 0.5) / 31.0;
+		float r = floor(col.r * 31.0 + t) / 31.0;
+		float g = floor(col.g * 63.0 + t) / 63.0;
+		float b = floor(col.b * 31.0 + t) / 31.0;
 		return float4(r, g, b, 1);
 	}
 	case 2: // 15 bit color (5-5-5)
 	{
-		float r = floor(col.r * 31.0 + 0.5) / 31.0;
-		float g = floor(col.g * 31.0 + 0.5) / 31.0;
-		float b = floor(col.b * 31.0 + 0.5) / 31.0;
+		float r = floor(col.r * 31.0 + t) / 31.0;
+		float g = floor(col.g * 31.0 + t) / 31.0;
+		float b = floor(col.b * 31.0 + t) / 31.0;
 		return float4(r, g, b, 1);
 	}
 	case 3: // 256 colors

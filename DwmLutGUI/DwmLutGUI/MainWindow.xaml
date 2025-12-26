@@ -30,7 +30,7 @@
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="Palette" TextAlignment="Right" />
                 <ComboBox x:Name="ToggleKeyCombo" Grid.Row="2" Grid.Column="0" Text="Toggle Key" SelectedItem="{Binding ToggleKey}" />
                 <ComboBox x:Name="ColorCombo" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top" Width="373" Height="22" Margin="6,0,0,4" SelectedIndex="3">
-                    <ComboBoxItem Content="True Color (32-bit)"/>
+                    <ComboBoxItem Content="True Color"/>
                     <ComboBoxItem Content="High Color (16-bit)"/>
                     <ComboBoxItem Content="High Color (15-bit)"/>
                     <ComboBoxItem Content="256 Colors"/>

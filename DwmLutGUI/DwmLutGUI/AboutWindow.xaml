@@ -11,7 +11,7 @@
         SnapsToDevicePixels="True">
     <StackPanel Margin="6">
         <TextBlock FontSize="15" HorizontalAlignment="Center" TextAlignment="Center">
-            ScreenFilter by <Hyperlink RequestNavigate="OnRequestNavigate" NavigateUri="https://www.ingan121.com/">Ingan121</Hyperlink>
+            ScreenFilter 2.0 by <Hyperlink RequestNavigate="OnRequestNavigate" NavigateUri="https://www.ingan121.com/">Ingan121</Hyperlink>
         </TextBlock>
         <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
             Based on dwm_lut by lauralex (originally by ledoge) <LineBreak />
