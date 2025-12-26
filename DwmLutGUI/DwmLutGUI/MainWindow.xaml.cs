@@ -120,6 +120,8 @@ namespace DwmLutGUI
             App.KListener.KeyDown += MonitorLutToggle;
             var keys = Enum.GetValues(typeof(Key)).Cast<Key>().ToList();
             ToggleKeyCombo.ItemsSource = keys;
+
+            LoadRegistryValues();
         }
 
         protected override void OnStateChanged(EventArgs e)
@@ -143,19 +145,6 @@ namespace DwmLutGUI
             _disableAndExitItem.Enabled = canDisable;
         }
 
-        private static string BrowseLuts(string folder)
-        {
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Filter = "LUT Files|*.cube;*.txt",
-                InitialDirectory = folder
-            };
-
-            var result = dlg.ShowDialog();
-
-            return result == true ? dlg.FileName : null;
-        }
-
         private void AboutButton_Click(object sender, RoutedEventArgs o)
         {
             var window = new AboutWindow
@@ -163,36 +152,6 @@ namespace DwmLutGUI
                 Owner = this
             };
             window.ShowDialog();
-        }
-
-        private void SdrLutBrowse_Click(object sender, RoutedEventArgs e)
-        {
-            var folder = Path.GetDirectoryName(_viewModel.SdrLutPath);
-            var lutPath = BrowseLuts(folder);
-            if (!string.IsNullOrEmpty(lutPath))
-            {
-                _viewModel.SdrLutPath = lutPath;
-            }
-        }
-
-        private void SdrLutClear_Click(object sender, RoutedEventArgs e)
-        {
-            _viewModel.SdrLutPath = "None";
-        }
-
-        private void HdrLutBrowse_Click(object sender, RoutedEventArgs e)
-        {
-            var folder = Path.GetDirectoryName(_viewModel.HdrLutPath);
-            var lutPath = BrowseLuts(folder);
-            if (!string.IsNullOrEmpty(lutPath))
-            {
-                _viewModel.HdrLutPath = lutPath;
-            }
-        }
-
-        private void HdrLutClear_Click(object sender, RoutedEventArgs e)
-        {
-            _viewModel.HdrLutPath = "None";
         }
 
         private void Disable_Click(object sender, RoutedEventArgs e)
@@ -213,6 +172,8 @@ namespace DwmLutGUI
             if (_applyOnCooldown) return;
             _applyOnCooldown = true;
 
+            WriteRegistryValues();
+
             try
             {
                 _viewModel.ReInject();
@@ -230,6 +191,34 @@ namespace DwmLutGUI
             });
         }
 
+        private void WriteRegistryValues()
+        {
+            var key = Registry.LocalMachine.CreateSubKey(@"Software\Ingan121\ScreenFilterDWM");
+            key.SetValue("Colors", ColorCombo.SelectedIndex);
+            key.SetValue("Palette", PalCombo.SelectedIndex);
+            var flags = (bool)Dither.IsChecked ? 1 : 0;
+            if ((bool)Invert.IsChecked)
+            {
+                flags |= 0b10;
+            }
+            if ((bool)NoPal.IsChecked)
+            {
+                flags |= 0b100;
+            }
+            key.SetValue("Flags", flags);
+        }
+
+        private void LoadRegistryValues()
+        {
+            var key = Registry.LocalMachine.CreateSubKey(@"Software\Ingan121\ScreenFilterDWM");
+            ColorCombo.SelectedIndex = (int)(key.GetValue("Colors") ?? 3);
+            PalCombo.SelectedIndex = (int)(key.GetValue("Palette") ?? 0);
+            var flags = (int)(key.GetValue("Flags") ?? 0);
+            Dither.IsChecked = (flags & 1) != 0;
+            Invert.IsChecked = (flags & 0b10) != 0;
+            NoPal.IsChecked = (flags & 0b100) != 0;
+        }
+
         private static void RedrawScreens()
         {
             var rect = Screen.AllScreens.Select(x => x.Bounds).Aggregate(Rectangle.Union);
@@ -242,7 +231,7 @@ namespace DwmLutGUI
             };
 
             overlay.Show();
-            Thread.Sleep(50);
+            Thread.Sleep(100);
             overlay.Close();
         }
 
@@ -283,6 +272,19 @@ namespace DwmLutGUI
             if (monitor == null) return;
             monitor.HdrLuts.Remove(monitor.HdrLutPath);
             monitor.HdrLutPath = monitor.HdrLuts.FirstOrDefault() ?? "None";
+        }
+
+        private void SetMonoColorButton_Click(object sender, RoutedEventArgs e)
+        {
+            ColorDialog colorDialog = new ColorDialog();
+            if (colorDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                var color = colorDialog.Color;
+                int monoColor = (color.R << 16) | (color.G << 8) | color.B;
+                var key = Registry.LocalMachine.CreateSubKey(@"Software\Ingan121\ScreenFilterDWM");
+                key.SetValue("MonoColor", monoColor);
+                key.Close();
+            }
         }
     }
 }

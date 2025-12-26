@@ -251,11 +251,7 @@ namespace DwmLutGUI
         public void ReInject()
         {
             Injector.Uninject();
-            if (!Monitors.All(monitor =>
-                    string.IsNullOrEmpty(monitor.SdrLutPath) && string.IsNullOrEmpty(monitor.HdrLutPath)))
-            {
-                Injector.Inject(Monitors);
-            }
+            Injector.Inject(Monitors);
 
             _activeConfig = _lastConfig;
             UpdateConfigChanged();

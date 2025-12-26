@@ -4,5 +4,6 @@
   "version": "3.9.1-hotfix",
   "dependencies": [
     "minhook"
-  ]
+  ],
+  "builtin-baseline": "64e1fbee7d9f40eab5d112aaff648c4dcffe9e47"
 }

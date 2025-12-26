@@ -16,7 +16,7 @@
 #pragma intrinsic(_ReturnAddress)
 
 #define DITHER_GAMMA 2.2
-#define LUT_FOLDER "%SYSTEMROOT%\\Temp\\luts"
+#define SCRNFLTR_REGISTRY_KEY L"Software\\Ingan121\\ScreenFilterDWM"
 
 #define RELEASE_IF_NOT_NULL(x) { if (x != NULL) { x->Release(); } }
 #define _STRINGIFY(x) #x
@@ -125,16 +125,6 @@ void log_to_file(const char* log_buf)
 }
 #endif
 
-
-unsigned int lut_index(const unsigned int b, const unsigned int g, const unsigned int r, const unsigned int c,
-                       const unsigned int lut_size)
-{
-	return lut_size * lut_size * 4 * b + lut_size * 4 * g + 4 * r + c;
-}
-
-#define LUT_ACCESS_INDEX(lut, b, g, r, c, lut_size) (*((float*)(lut) + lut_index(b, g, r, c, lut_size)))
-
-
 const unsigned char COverlayContext_Present_bytes[] = {
 	0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x40, 0x48, 0x8b, 0xb1, 0x20,
 	0x2c, 0x00, 0x00, 0x45, 0x8b, 0xd0, 0x48, 0x8b, 0xfa, 0x48, 0x8b, 0xd9, 0x48, 0x85, 0xf6, 0x0f, 0x85
@@ -202,6 +192,11 @@ bool aob_match_inverse(const void* buf1, const void* mask, const int buf_len)
 	return false;
 }
 
+DWORD g_colors = 3; // 256 colors
+DWORD g_flags = 0;  // no dither, no invert, use palette on low color modes
+DWORD g_palette = 0; // default palette
+DWORD g_monocolor = 0xFFFFFF; // white
+
 char shaders[] = R"(
     struct VS_INPUT {
 	float2 pos : POSITION;
@@ -214,88 +209,68 @@ struct VS_OUTPUT {
 };
 
 Texture2D backBufferTex : register(t0);
-Texture3D lutTex : register(t1);
 SamplerState smp : register(s0);
 
 Texture2D noiseTex : register(t2);
 SamplerState noiseSmp : register(s1);
 
-int lutSize : register(b0);
-bool hdr : register(b0);
+int colors : register(b0); // enum { TrueColor = 0, 16bit, 15bit, 256, 64, 20, 16, 8, 4, 2 = 9 }
+int flags : register(b0); // bit0: dither, bit1: invert, bit2: no palette use (colors <= 20), bit3: hdr?
+int palette : register(b0); // 0: default, 1: grayscale, 2: alt pal 1 (16 - EGA, 8 - UltraVNC dark 8), 3: alt pal 2 (16: VMware/86Box VGA output)
+int monocolor : register(b0); // color to use in monochrome mode
 
-static float3x3 scrgb_to_bt2100 = {
-2939026994.L / 585553224375.L, 9255011753.L / 3513319346250.L,   173911579.L / 501902763750.L,
-  76515593.L / 138420033750.L, 6109575001.L / 830520202500.L,    75493061.L / 830520202500.L,
-  12225392.L / 93230009375.L, 1772384008.L / 2517210253125.L, 18035212433.L / 2517210253125.L,
-};
-
-static float3x3 bt2100_to_scrgb = {
- 348196442125.L / 1677558947.L, -123225331250.L / 1677558947.L,  -15276242500.L / 1677558947.L,
--579752563250.L / 37238079773.L, 5273377093000.L / 37238079773.L,  -38864558125.L / 37238079773.L,
- -12183628000.L / 5369968309.L, -472592308000.L / 37589778163.L, 5256599974375.L / 37589778163.L,
-};
-
-static float m1 = 1305 / 8192.;
-static float m2 = 2523 / 32.;
-static float c1 = 107 / 128.;
-static float c2 = 2413 / 128.;
-static float c3 = 2392 / 128.;
-
-float3 SampleLut(float3 index) {
-	float3 tex = (index + 0.5) / lutSize;
-	return lutTex.Sample(smp, tex).rgb;
+float bayer4x4(int x, int y) {
+    // 4x4 Bayer matrix normalized 0..1
+    int idx = (y & 3) * 4 + (x & 3);
+    // Values from 0..15
+    int m[16] = { 0, 8, 2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5 };
+    return (m[idx] + 0.5) / 16.0;
 }
 
-// adapted from https://doi.org/10.2312/egp.20211031
-void barycentricWeight(float3 r, out float4 bary, out int3 vert2, out int3 vert3) {
-	vert2 = int3(0, 0, 0); vert3 = int3(1, 1, 1);
-	int3 c = r.xyz >= r.yzx;
-	bool c_xy = c.x; bool c_yz = c.y; bool c_zx = c.z;
-	bool c_yx = !c.x; bool c_zy = !c.y; bool c_xz = !c.z;
-	bool cond;  float3 s = float3(0, 0, 0);
-#define ORDER(X, Y, Z)                   \
-            cond = c_ ## X ## Y && c_ ## Y ## Z; \
-            s = cond ? r.X ## Y ## Z : s;        \
-            vert2.X = cond ? 1 : vert2.X;        \
-            vert3.Z = cond ? 0 : vert3.Z;
-	ORDER(x, y, z)   ORDER(x, z, y)   ORDER(z, x, y)
-		ORDER(z, y, x)   ORDER(y, z, x)   ORDER(y, x, z)
-		bary = float4(1 - s.x, s.z, s.x - s.y, s.y - s.z);
+float3 QuantizeLevels(float3 c, int levels) {
+    if (levels <= 1) return float3(0,0,0);
+    float denom = (float)(levels - 1);
+    c = floor(c * denom + 0.5) / denom; 
+    return c;
 }
 
-float3 LutTransformTetrahedral(float3 rgb) {
-	float3 lutIndex = rgb * (lutSize - 1);
-	float4 bary; int3 vert2; int3 vert3;
-	barycentricWeight(frac(lutIndex), bary, vert2, vert3);
-
-	float3 base = floor(lutIndex);
-	return bary.x * SampleLut(base) +
-		bary.y * SampleLut(base + 1) +
-		bary.z * SampleLut(base + vert2) +
-		bary.w * SampleLut(base + vert3);
+float3 NearestPalette8(float3 col, float3 pal[8]) {
+	float bestDist = 1e9;
+	float3 best = pal[0];
+	for (int i = 0; i < 8; ++i) {
+		float3 p = pal[i];
+		float dx = col.x - p.x; float dy = col.y - p.y; float dz = col.z - p.z;
+		float d = dx*dx + dy*dy + dz*dz;
+		if (d < bestDist) { bestDist = d; best = p; }
+	}
+	return best;
 }
 
-float3 pq_eotf(float3 e) {
-	return pow(max((pow(e, 1 / m2) - c1), 0) / (c2 - c3 * pow(e, 1 / m2)), 1 / m1);
+float3 NearestPalette16(float3 col, float3 pal[16]) {
+    float bestDist = 1e9;
+    float3 best = pal[0];
+    for (int i = 0; i < 16; ++i) {
+        float3 p = pal[i];
+        float dx = col.x - p.x; float dy = col.y - p.y; float dz = col.z - p.z;
+        float d = dx*dx + dy*dy + dz*dz;
+        if (d < bestDist) { bestDist = d; best = p; }
+    }
+    return best;
 }
 
-float3 pq_inv_eotf(float3 y) {
-	return pow((c1 + c2 * pow(y, m1)) / (1 + c3 * pow(y, m1)), m2);
+float3 NearestPalette20(float3 col, float3 pal[20]) {
+	float bestDist = 1e9;
+	float3 best = pal[0];
+	for (int i = 0; i < 20; ++i) {
+		float3 p = pal[i];
+		float dx = col.x - p.x; float dy = col.y - p.y; float dz = col.z - p.z;
+		float d = dx*dx + dy*dy + dz*dz;
+		if (d < bestDist) { bestDist = d; best = p; }
+	}
+	return best;
 }
 
-float3 OrderedDither(float3 rgb, float2 pos) {
-	float3 low = floor(rgb * 255) / 255;
-	float3 high = low + 1.0 / 255;
-
-	float3 rgb_linear = pow(rgb,)" STRINGIFY(DITHER_GAMMA) R"();
-	float3 low_linear = pow(low,)" STRINGIFY(DITHER_GAMMA) R"();
-	float3 high_linear = pow(high,)" STRINGIFY(DITHER_GAMMA) R"();
-
-	float noise = noiseTex.Sample(noiseSmp, pos / )" STRINGIFY(NOISE_SIZE) R"().x;
-	float3 threshold = lerp(low_linear, high_linear, noise);
-
-	return lerp(low, high, rgb_linear > threshold);
-}
+float lum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 
 VS_OUTPUT VS(VS_INPUT input) {
 	VS_OUTPUT output;
@@ -305,23 +280,212 @@ VS_OUTPUT VS(VS_INPUT input) {
 }
 
 float4 PS(VS_OUTPUT input) : SV_TARGET{
-	float3 sample = backBufferTex.Sample(smp, input.tex).rgb;
-
-	if (hdr) {
-		float3 hdr10_sample = pq_inv_eotf(saturate(mul(scrgb_to_bt2100, sample)));
-
-		float3 hdr10_res = LutTransformTetrahedral(hdr10_sample);
-
-		float3 scrgb_res = mul(bt2100_to_scrgb, pq_eotf(hdr10_res));
-
-		return float4(scrgb_res, 1);
+	float3 col = backBufferTex.Sample(smp, input.tex).rgb;
+	
+	bool dither = (flags & 1) != 0;
+	float t = 0.5;
+	if (dither) {
+		int ix = (int)input.pos.x;
+		int iy = (int)input.pos.y;
+		t = bayer4x4(ix, iy);
 	}
-	else {
-		float3 res = LutTransformTetrahedral(sample);
-
-		res = OrderedDither(res, input.pos.xy);
-
-		return float4(res, 1);
+	
+	bool nopal = (flags & 4) != 0;
+	
+	bool gray = (palette == 1 || colors >= 8);
+	if (gray) {
+		float l = lum(col);
+		col = float3(l, l, l);
+	}
+	
+	bool invert = (flags & 2) != 0;
+	if (invert) {
+		col = 1.0 - col;
+	}
+	
+	switch (colors) {
+	case 0: // true color
+		return float4(col, 1);
+	case 1: // 16 bit color (5-6-5)
+	{
+		float r = floor(col.r * 31.0 + 0.5) / 31.0;
+		float g = floor(col.g * 63.0 + 0.5) / 63.0;
+		float b = floor(col.b * 31.0 + 0.5) / 31.0;
+		return float4(r, g, b, 1);
+	}
+	case 2: // 15 bit color (5-5-5)
+	{
+		float r = floor(col.r * 31.0 + 0.5) / 31.0;
+		float g = floor(col.g * 31.0 + 0.5) / 31.0;
+		float b = floor(col.b * 31.0 + 0.5) / 31.0;
+		return float4(r, g, b, 1);
+	}
+	case 3: // 256 colors
+	{
+		if (gray) {
+			col = floor(col * 8.0 + t) / 7.0;
+			return float4(col, 1);
+		} else if (dither) {
+			float r = floor(col.r * 8.0 + t) / 7.0;
+			float g = floor(col.g * 8.0 + t) / 7.0;
+			float b = floor(col.b * 4.0 + t) / 3.0;
+			return float4(r, g, b, 1);
+		} else {
+			float r = floor(col.r * 7.0 + 0.5) / 7.0;
+			float g = floor(col.g * 7.0 + 0.5) / 7.0;
+			float b = floor(col.b * 3.0 + 0.5) / 3.0;
+			return float4(r, g, b, 1);
+		}
+	}
+	case 4: // 64 colors
+	{
+		col = floor(col * 4.0 + t) / 3.0;
+		return float4(col, 1);
+	}
+	case 5: // 20 colors
+	{
+		if (nopal || gray || dither) {
+			col = floor(col * 4.0 + t) / 3.0;
+			if (nopal || gray) {
+				return float4(col, 1);
+			}
+		}
+		float3 pal_win[20] = {
+			float3(0,0,0), // black
+			float3(0.50196,0,0), // dark red
+			float3(0,0.50196,0), // dark green
+			float3(0.50196,0.50196,0), // dark yellow
+			float3(0,0,0.50196), // dark blue
+			float3(0.50196,0,0.50196), // dark magenta
+			float3(0,0.50196,0.50196), // dark cyan
+			float3(0.75294,0.75294,0.75294), // light gray
+			float3(0.50196,0.50196,0.50196), // dark gray
+			float3(1,0,0), // red
+			float3(0,1,0), // green
+			float3(1,1,0), // yellow
+			float3(0,0,1), // blue
+			float3(1,0,1), // magenta
+			float3(0,1,1), // cyan
+			float3(1,1,1), // white
+			float3(0.75294,0.86275,0.75294), // light green
+			float3(0.65098,0.79216,0.94118), // light blue
+			float3(1,0.98039,0.94118), // light yellow
+			float3(0.62745,0.62745,0.63922)  // light gray
+		};
+		float3 nc = NearestPalette20(col, pal_win);
+		return float4(nc, 1);
+	}
+	case 6: // 16 colors
+	{
+		if (nopal || gray || dither) {
+			col = floor(col * 4.0 + t) / 4.0;
+			if (nopal || gray) {
+				return float4(col, 1);
+			}
+		}
+		float3 pal_vga[16] = {
+			float3(0,0,0), // black
+			float3(0.50196,0,0), // dark red
+			float3(0,0.50196,0), // dark green
+			float3(0.50196,0.50196,0), // dark yellow
+			float3(0,0,0.50196), // dark blue
+			float3(0.50196,0,0.50196), // dark magenta
+			float3(0,0.50196,0.50196), // dark cyan
+			float3(0.75294,0.75294,0.75294), // light gray
+			float3(0.50196,0.50196,0.50196), // dark gray
+			float3(1,0,0), // red
+			float3(0,1,0), // green
+			float3(1,1,0), // yellow
+			float3(0,0,1), // blue
+			float3(1,0,1), // magenta
+			float3(0,1,1), // cyan
+			float3(1,1,1)  // white
+		};
+		float3 pal_ega[16] = {
+			float3(0,0,0), // black
+			float3(0,0,0.66667), // blue
+			float3(0,0.66667,0), // green
+			float3(0,0.66667,0.66667), // cyan
+			float3(0.66667,0,0), // red
+			float3(0.66667,0,0.66667), // magenta
+			float3(0.66667,0.33333,0), // brown
+			float3(0.66667,0.66667,0.66667), // light gray
+			float3(0.33333,0.33333,0.33333), // dark gray
+			float3(0.33333,0.33333,1), // bright blue
+			float3(0.33333,1,0.33333), // bright green
+			float3(0.33333,1,1), // bright cyan
+			float3(1,0.33333,0.33333), // bright red
+			float3(1,0.33333,1), // bright magenta
+			float3(1,1,0.33333), // yellow
+			float3(1,1,1)  // white
+		};
+		float3 pal_vmware[16] = {
+			float3(0,0,0), // black
+			float3(0,0,0.66667), // blue
+			float3(0,0.66667,0), // green
+			float3(0,0.66667,0.66667), // cyan
+			float3(0.66667,0,0), // red
+			float3(0.66667,0,0.66667), // magenta
+			float3(0.66667,0.66667,0), // yellow
+			float3(0.76471,0.78039,0.79608), // light gray
+			float3(0.52941,0.54118,0.55686), // dark gray
+			float3(0,0,1), // bright blue
+			float3(0,1,0), // bright green
+			float3(0,1,1), // bright cyan
+			float3(1,0,0), // bright red
+			float3(1,0,1), // bright magenta
+			float3(1,1,0), // bright yellow
+			float3(1,1,1)  // white
+		};
+		switch (palette) {
+		case 2:
+			return float4(NearestPalette16(col, pal_ega), 1);
+		case 3:
+			return float4(NearestPalette16(col, pal_vmware), 1);
+		}
+		return float4(NearestPalette16(col, pal_vga), 1);
+	}
+	case 7: // 8 colors
+	{
+		if (nopal || gray || dither || palette != 2) {
+			col = floor(col * 7.0 + t) / 7.0;
+			if (nopal || gray || palette != 2) {
+				return float4(col, 1);
+			}
+		}
+		float3 pal_uvnc[8] = {
+			float3(0,0,0), // black
+			float3(1,1,1), // white
+			float3(0.14118,0.14118,0.33333), // dark blue
+			float3(0.28627,0.28627,0.33333), // dark cyan
+			float3(0.42745,0.42745,0.33333), // dark green
+			float3(0.57255,0.57255,0.66667), // light blue
+			float3(0.71373,0.71373,0.66667), // light cyan
+			float3(0.85882,0.85882,0.66667)  // light green
+		};
+		float3 nc = NearestPalette8(col, pal_uvnc);
+		return float4(nc, 1);
+	}
+	case 8: // 4 colors
+	{
+		col = floor(col * 3.0 + t) / 3.0;
+		return float4(col, 1);
+	}
+	case 9: // 2 colors
+	{
+		float c = step(t, col.x);
+		if (palette == 2) { // use monocolor instead of white
+			if (c > 0.5) {
+				int r = monocolor >> 16 & 0xFF;
+				int g = monocolor >> 8 & 0xFF;
+				int b = monocolor & 0xFF;
+				return float4(r / 255.0, g / 255.0, b / 255.0, 1);
+			}
+		}
+		return float4(c, c, c, 1);
+	}
+	default:
+		return float4(col, 1);
 	}
 }
 )";
@@ -348,16 +512,6 @@ ID3D11SamplerState* noiseSamplerState;
 ID3D11ShaderResourceView* noiseTextureView;
 
 ID3D11Buffer* constantBuffer;
-
-struct lutData
-{
-	int left;
-	int top;
-	int size;
-	bool isHdr;
-	ID3D11ShaderResourceView* textureView;
-	float* rawLut;
-};
 
 void DrawRectangle(struct tagRECT* rect, int index)
 {
@@ -398,178 +552,24 @@ void DrawRectangle(struct tagRECT* rect, int index)
 	deviceContext->Draw(numVerts, 0);
 }
 
-int numLuts;
-
-lutData* luts;
-
-bool ParseLUT(lutData* lut, char* filename)
-{
-	FILE* file = fopen(filename, "r");
-	if (file == NULL) return false;
-
-	char line[256];
-	unsigned int lutSize;
-
-	while (1)
-	{
-		if (!fgets(line, sizeof(line), file))
-		{
-			fclose(file);
-			return false;
-		}
-		if (sscanf(line, "LUT_3D_SIZE%d", &lutSize) == 1)
-		{
-			break;
-		}
-	}
-	// borgaccio
-	float* rawLut = (float*)malloc(lutSize * lutSize * lutSize * 4 * sizeof(float));
-	// lut_3d_vec rawLut(lutSize, { lutSize, {lutSize, RGBA_VEC} });
-
-	for (int b = 0; b < lutSize; b++)
-	{
-		for (int g = 0; g < lutSize; g++)
-		{
-			for (int r = 0; r < lutSize; r++)
-			{
-				while (1)
-				{
-					if (!fgets(line, sizeof(line), file))
-					{
-						fclose(file);
-						// free(rawLut);
-						return false;
-					}
-					if (line[0] <= '9' && line[0] != '#' && line[0] != '\n')
-					{
-						float red, green, blue;
-
-						if (sscanf(line, "%f%f%f", &red, &green, &blue) != 3)
-						{
-							fclose(file);
-							// free(rawLut);
-							return false;
-						}
-						LUT_ACCESS_INDEX(rawLut, b, g, r, 0, lutSize) = red;
-						LUT_ACCESS_INDEX(rawLut, b, g, r, 1, lutSize) = green;
-						LUT_ACCESS_INDEX(rawLut, b, g, r, 2, lutSize) = blue;
-						LUT_ACCESS_INDEX(rawLut, b, g, r, 3, lutSize) = 1;
-
-						break;
-					}
-				}
-			}
-		}
-	}
-	fclose(file);
-	lut->size = lutSize;
-	lut->rawLut = rawLut;
-	return true;
-}
-
-bool AddLUTs(char* folder)
-{
-	WIN32_FIND_DATAA findData;
-
-	char path[MAX_PATH];
-	strcpy(path, folder);
-	strcat(path, "\\*");
-	HANDLE hFind = FindFirstFileA(path, &findData);
-	if (hFind == INVALID_HANDLE_VALUE) return false;
-	do
-	{
-		if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-		{
-			char filePath[MAX_PATH];
-			char* fileName = findData.cFileName;
-
-			strcpy(filePath, folder);
-			strcat(filePath, "\\");
-			strcat(filePath, fileName);
-
-			luts = (lutData*)RESIZE(luts, numLuts + 1)
-			lutData* lut = &luts[numLuts];
-			if (sscanf(findData.cFileName, "%d_%d", &lut->left, &lut->top) == 2)
-			{
-				lut->isHdr = strstr(fileName, "hdr") != NULL;
-				lut->textureView = NULL;
-				if (!ParseLUT(lut, filePath))
-				{
-					// TODO: Remove this debug instruction
-					MESSAGE_BOX_DBG("LUT could not be parsed", MB_OK | MB_ICONWARNING)
-					FindClose(hFind);
-					return false;
-				}
-				numLuts++;
-			}
-		}
-	}
-	while (FindNextFileA(hFind, &findData) != 0);
-	FindClose(hFind);
-	return true;
-}
-
-int numLutTargets;
-void** lutTargets;
+bool g_active = false;
 
 bool IsLUTActive(void* target)
 {
-	for (int i = 0; i < numLutTargets; i++)
-	{
-		if (lutTargets[i] == target)
-		{
-			return true;
-		}
-	}
-	return false;
+	return g_active;
 }
 
 void SetLUTActive(void* target)
 {
 	if (!IsLUTActive(target))
 	{
-		lutTargets = (void**)RESIZE(lutTargets, numLutTargets + 1)
-		lutTargets[numLutTargets++] = target;
+		g_active = true;
 	}
 }
 
 void UnsetLUTActive(void* target)
 {
-	for (int i = 0; i < numLutTargets; i++)
-	{
-		if (lutTargets[i] == target)
-		{
-			lutTargets[i] = lutTargets[--numLutTargets];
-			lutTargets = (void**)RESIZE(lutTargets, numLutTargets)
-			return;
-		}
-	}
-}
-
-lutData* GetLUTDataFromCOverlayContext(void* context, bool hdr)
-{
-	int left, top;
-	if (isWindows11)
-	{
-		float* rect = (float*)((unsigned char*)*(void**)context + COverlayContext_DeviceClipBox_offset_w11);
-		left = (int)rect[0];
-		top = (int)rect[1];
-	}
-	else
-	{
-		int* rect = (int*)((unsigned char*)context + COverlayContext_DeviceClipBox_offset);
-		left = rect[0];
-		top = rect[1];
-	}
-
-	for (int i = 0; i < numLuts; i++)
-	{
-		if (luts[i].left == left && luts[i].top == top && luts[i].isHdr == hdr)
-		{
-			return &luts[i];
-		}
-	}
-	return NULL;
+	g_active = false;
 }
 
 void InitializeStuff(IDXGISwapChain* swapChain)
@@ -645,31 +645,6 @@ void InitializeStuff(IDXGISwapChain* swapChain)
 			samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
 
 			EXECUTE_WITH_LOG(device->CreateSamplerState(&samplerDesc, &samplerState))
-		}
-		for (int i = 0; i < numLuts; i++)
-		{
-			lutData* lut = &luts[i];
-
-			D3D11_TEXTURE3D_DESC desc = {};
-			desc.Width = lut->size;
-			desc.Height = lut->size;
-			desc.Depth = lut->size;
-			desc.MipLevels = 1;
-			desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-			desc.Usage = D3D11_USAGE_IMMUTABLE;
-			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-			D3D11_SUBRESOURCE_DATA initData;
-			initData.pSysMem = lut->rawLut;
-			initData.SysMemPitch = lut->size * 4 * sizeof(float);
-			initData.SysMemSlicePitch = lut->size * lut->size * 4 * sizeof(float);
-
-			ID3D11Texture3D* tex;
-			EXECUTE_WITH_LOG(device->CreateTexture3D(&desc, &initData, &tex))
-			EXECUTE_WITH_LOG(device->CreateShaderResourceView((ID3D11Resource*)tex, NULL, &luts[i].textureView))
-			tex->Release();
-			free(lut->rawLut);
-			lut->rawLut = NULL;
 		}
 		{
 			D3D11_SAMPLER_DESC samplerDesc = {};
@@ -754,13 +729,6 @@ void UninitializeStuff()
 	RELEASE_IF_NOT_NULL(noiseSamplerState)
 	RELEASE_IF_NOT_NULL(noiseTextureView)
 	RELEASE_IF_NOT_NULL(constantBuffer)
-	for (int i = 0; i < numLuts; i++)
-	{
-		free(luts[i].rawLut);
-		RELEASE_IF_NOT_NULL(luts[i].textureView)
-	}
-	free(luts);
-	free(lutTargets);
 }
 
 bool ApplyLUT(void* cOverlayContext, IDXGISwapChain* swapChain, struct tagRECT* rects, int numRects)
@@ -791,13 +759,6 @@ bool ApplyLUT(void* cOverlayContext, IDXGISwapChain* swapChain, struct tagRECT* 
 		else if (newBackBufferDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
 		{
 			index = 1;
-		}
-
-		lutData* lut;
-		if (index == -1 || !(lut = GetLUTDataFromCOverlayContext(cOverlayContext, index == 1)))
-		{
-			backBuffer->Release();
-			return false;
 		}
 
 		D3D11_TEXTURE2D_DESC oldTextureDesc = textureDesc[index];
@@ -845,13 +806,17 @@ bool ApplyLUT(void* cOverlayContext, IDXGISwapChain* swapChain, struct tagRECT* 
 		deviceContext->PSSetShader(pixelShader, NULL, 0);
 
 		deviceContext->PSSetShaderResources(0, 1, &textureView[index]);
-		deviceContext->PSSetShaderResources(1, 1, &lut->textureView);
 		deviceContext->PSSetSamplers(0, 1, &samplerState);
 
 		deviceContext->PSSetShaderResources(2, 1, &noiseTextureView);
 		deviceContext->PSSetSamplers(1, 1, &noiseSamplerState);
 
-		int constantData[4] = {lut->size, index == 1};
+		int constantData[4] = {
+			g_colors,
+			g_flags,
+			g_palette,
+			g_monocolor
+		};
 
 		D3D11_MAPPED_SUBRESOURCE resource;
 		EXECUTE_WITH_LOG(deviceContext->Map((ID3D11Resource*)constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
@@ -1115,11 +1080,15 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID lpReserved)
 				}
 			}
 
-			char lutFolderPath[MAX_PATH];
-			ExpandEnvironmentStringsA(LUT_FOLDER, lutFolderPath, sizeof(lutFolderPath));
-			if (!AddLUTs(lutFolderPath))
+			HKEY hKey;
+			if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, SCRNFLTR_REGISTRY_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
 			{
-				return FALSE;
+				DWORD dwSize = sizeof(DWORD);
+				RegQueryValueExW(hKey, L"Colors", NULL, NULL, (LPBYTE)&g_colors, &dwSize);
+				RegQueryValueExW(hKey, L"Flags", NULL, NULL, (LPBYTE)&g_flags, &dwSize);
+				RegQueryValueExW(hKey, L"Palette", NULL, NULL, (LPBYTE)&g_palette, &dwSize);
+				RegQueryValueExW(hKey, L"MonoColor", NULL, NULL, (LPBYTE)&g_monocolor, &dwSize);
+				RegCloseKey(hKey);
 			}
 			char variable_message_states[300];
 			sprintf(variable_message_states, "Current variable states: COverlayContext::Present - %p\t"
@@ -1130,7 +1099,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID lpReserved)
 			MESSAGE_BOX_DBG(variable_message_states, MB_OK)
 
 			if (COverlayContext_Present_orig && COverlayContext_IsCandidateDirectFlipCompatbile_orig &&
-				COverlayContext_OverlaysEnabled_orig && numLuts != 0)
+				COverlayContext_OverlaysEnabled_orig)
 
 			{
 				MH_Initialize();
