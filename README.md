@@ -1,17 +1,14 @@
 # ScreenFilter
 * A useless application that limits your screen colors
-
-# A fork of the [original dwm_lut](https://github.com/ledoge/dwm_lut) which works also on **Windows 11**
-## [Download latest pre-release (supports Windows 24H2 now)](https://github.com/lauralex/dwm_lut/releases/download/v4.0.2/Release24h2.zip)
-If you encounter problems with the 4.0.2 version, download the [3.9.6](https://github.com/lauralex/dwm_lut/releases/download/v3.9.6/Release.zip) version.
+* A fork of the [dwm_lut](https://github.com/lauralex/dwm_lut) which is a fork of the [original dwm_lut](https://github.com/ledoge/dwm_lut)
 
 ## Dependencies
 - Visual C++ runtime (https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-all-in-one/)
 
 # About
-This tool applies color limiting filters to the Windows desktop by hooking into DWM. It works in both SDR and ~~HDR modes~~ (not really great).
+This tool applies color-limiting filters to the Windows desktop by hooking into DWM. It works in both SDR and ~~HDR modes~~ (not really great).
 
-Right now it should work on any 20H2 or 21H1 build of Windows 10, and also the current build of Windows 11, and I'll try to update it whenever a new version breaks it.
+Right now, it should work on any 20H2 or 21H1 build of Windows 10, and also the current build of Windows 11, and I'll try to update it whenever a new version breaks it.
 
 # Usage
 Run `DwmLutGUI.exe` and click Apply.
