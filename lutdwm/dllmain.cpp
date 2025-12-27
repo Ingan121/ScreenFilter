@@ -192,7 +192,7 @@ bool aob_match_inverse(const void* buf1, const void* mask, const int buf_len)
 	return false;
 }
 
-DWORD g_colors = 3; // 256 colors
+DWORD g_colors = 5; // 256 colors
 DWORD g_flags = 0;  // no dither, no invert, use palette on low color modes
 DWORD g_palette = 0; // default palette
 DWORD g_monocolor = 0xFFFFFF; // white
@@ -214,9 +214,9 @@ SamplerState smp : register(s0);
 Texture2D noiseTex : register(t2);
 SamplerState noiseSmp : register(s1);
 
-int colors : register(b0); // enum { TrueColor = 0, 16bit, 15bit, 256, 64, 20, 16, 8, 4, 2 = 9 }
+int colors : register(b0); // enum { TrueColor = 0, 16bit, 15bit, 12bit, 10bit, 256, 64, 20, 16, 8, 4, 2 = 11 }
 int flags : register(b0); // bit0: dither, bit1: invert, bit2: no palette use (colors <= 20), bit3: hdr?
-int palette : register(b0); // 0: default, 1: grayscale, 2: alt pal 1 (16 - EGA, 8 - UltraVNC dark 8), 3: alt pal 2 (16: VMware/86Box VGA output)
+int palette : register(b0); // 0: default, 1: grayscale, 2: alt pal 1 (16 - EGA, 8 - UltraVNC dark 8), 3: alt pal 2 (16: VMware/86Box VGA output), 4: grayscale (Rec. 601)
 int monocolor : register(b0); // color to use in monochrome mode
 
 float bayer4x4(int x, int y) {
@@ -225,13 +225,6 @@ float bayer4x4(int x, int y) {
     // Values from 0..15
     int m[16] = { 0, 8, 2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5 };
     return (m[idx] + 0.5) / 16.0;
-}
-
-float3 QuantizeLevels(float3 c, int levels) {
-    if (levels <= 1) return float3(0,0,0);
-    float denom = (float)(levels - 1);
-    c = floor(c * denom + 0.5) / denom; 
-    return c;
 }
 
 float3 NearestPalette8(float3 col, float3 pal[8]) {
@@ -258,6 +251,18 @@ float3 NearestPalette16(float3 col, float3 pal[16]) {
     return best;
 }
 
+float3 NearestPalette16AltOutput(float3 col, float3 pal[16], float3 pal_alt[16]) {
+	float bestDist = 1e9;
+	int bestIdx = 0;
+	for (int i = 0; i < 16; ++i) {
+		float3 p = pal[i];
+		float dx = col.x - p.x; float dy = col.y - p.y; float dz = col.z - p.z;
+		float d = dx*dx + dy*dy + dz*dz;
+		if (d < bestDist) { bestDist = d; bestIdx = i; }
+	}
+	return pal_alt[bestIdx];
+}
+
 float3 NearestPalette20(float3 col, float3 pal[20]) {
 	float bestDist = 1e9;
 	float3 best = pal[0];
@@ -270,7 +275,8 @@ float3 NearestPalette20(float3 col, float3 pal[20]) {
 	return best;
 }
 
-float lum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+float lum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); } // Rec. 709 (sRGB, HDTV)
+float lum601(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); } // Rec. 601 (SDTV, ScreenFilter 1.x GDI, Windows accessibility color filters)
 
 VS_OUTPUT VS(VS_INPUT input) {
 	VS_OUTPUT output;
@@ -292,10 +298,15 @@ float4 PS(VS_OUTPUT input) : SV_TARGET{
 	
 	bool nopal = (flags & 4) != 0;
 	
-	bool gray = (palette == 1 || colors >= 8);
+	bool gray = (palette == 1 || palette == 4 || colors >= 10);
 	if (gray) {
-		float l = lum(col);
-		col = float3(l, l, l);
+		if (palette == 4) {
+			float l = lum601(col);
+			col = float3(l, l, l);
+		} else {
+			float l = lum(col);
+			col = float3(l, l, l);
+		}
 	}
 	
 	bool invert = (flags & 2) != 0;
@@ -320,35 +331,64 @@ float4 PS(VS_OUTPUT input) : SV_TARGET{
 		float b = floor(col.b * 31.0 + t) / 31.0;
 		return float4(r, g, b, 1);
 	}
-	case 3: // 256 colors
+	case 3: // 12 bit color (4-4-4)
+	{
+		float r = floor(col.r * 15.0 + t) / 15.0;
+		float g = floor(col.g * 15.0 + t) / 15.0;
+		float b = floor(col.b * 15.0 + t) / 15.0;
+		return float4(r, g, b, 1);
+	}
+	case 4: // 10 bit color (3-4-3)
+	{
+		float r = floor(col.r * 7.0 + t) / 7.0;
+		float g = floor(col.g * 15.0 + t) / 15.0;
+		float b = floor(col.b * 7.0 + t) / 7.0;
+		return float4(r, g, b, 1);
+	}
+	case 5: // 256 colors
 	{
 		if (gray) {
-			col = floor(col * 8.0 + t) / 7.0;
 			return float4(col, 1);
-		} else if (dither) {
-			float r = floor(col.r * 8.0 + t) / 7.0;
-			float g = floor(col.g * 8.0 + t) / 7.0;
-			float b = floor(col.b * 4.0 + t) / 3.0;
-			return float4(r, g, b, 1);
-		} else {
-			float r = floor(col.r * 7.0 + 0.5) / 7.0;
-			float g = floor(col.g * 7.0 + 0.5) / 7.0;
-			float b = floor(col.b * 3.0 + 0.5) / 3.0;
-			return float4(r, g, b, 1);
 		}
+		float r = floor(col.r * 7.0 + t) / 7.0;
+		float g = floor(col.g * 7.0 + t) / 7.0;
+		float b = floor(col.b * 3.0 + t) / 3.0;
+		return float4(r, g, b, 1);
 	}
-	case 4: // 64 colors
+	case 6: // 64 colors
 	{
-		col = floor(col * 4.0 + t) / 3.0;
+		if (gray) {
+			float l = floor(col.x * 63.0 + t) / 63.0;
+			return float4(l, l, l, 1);
+		}
+		col = floor(col * 3.0 + t) / 3.0;
 		return float4(col, 1);
 	}
-	case 5: // 20 colors
+	case 7: // 20 colors
 	{
-		if (nopal || gray || dither) {
-			col = floor(col * 4.0 + t) / 3.0;
-			if (nopal || gray) {
-				return float4(col, 1);
-			}
+		if (gray) {
+			float l = floor(col.x * 19.0 + t) / 19.0;
+			return float4(l, l, l, 1);
+		}
+		if (dither) {
+			col = floor(col * 3.0 + t) / 3.0;
+		}
+		if (nopal) {
+			// 20-color quantization
+			// Web-safe palette: R,G,B in {0, 128, 255}
+			float r = col.r;
+			float g = col.g;
+			float b = col.b;
+			if (r < 0.25) r = 0;
+			else if (r < 0.75) r = 0.5;
+			else r = 1.0;
+			if (g < 0.25) g = 0;
+			else if (g < 0.75) g = 0.5;
+			else g = 1.0;
+			if (b < 0.25) b = 0;
+			else if (b < 0.75) b = 0.5;
+			else b = 1.0;
+			return float4(r, g, b, 1);
 		}
 		float3 pal_win[20] = {
 			float3(0,0,0), // black
@@ -375,13 +415,20 @@ float4 PS(VS_OUTPUT input) : SV_TARGET{
 		float3 nc = NearestPalette20(col, pal_win);
 		return float4(nc, 1);
 	}
-	case 6: // 16 colors
+	case 8: // 16 colors
 	{
-		if (nopal || gray || dither) {
-			col = floor(col * 4.0 + t) / 4.0;
-			if (nopal || gray) {
-				return float4(col, 1);
-			}
+		if (gray) {
+			float l = floor(col.x * 15.0 + t) / 15.0;
+			return float4(l, l, l, 1);
+		}
+		if (nopal) {
+			float r = floor(col.r + t);
+			float g = floor(col.g * 3.0 + t) / 3.0;
+			float b = floor(col.b + t);
+			return float4(r, g, b, 1);
+		}
+		if (dither) {
+			col = floor(col * 3.0 + t) / 3.0;
 		}
 		float3 pal_vga[16] = {
 			float3(0,0,0), // black
@@ -421,35 +468,39 @@ float4 PS(VS_OUTPUT input) : SV_TARGET{
 		};
 		float3 pal_vmware[16] = {
 			float3(0,0,0), // black
-			float3(0,0,0.66667), // blue
-			float3(0,0.66667,0), // green
-			float3(0,0.66667,0.66667), // cyan
-			float3(0.66667,0,0), // red
-			float3(0.66667,0,0.66667), // magenta
-			float3(0.66667,0.66667,0), // yellow
+			float3(0.66667,0,0.33333), // dark red
+			float3(0,0.66667,0.33333), // dark green
+			float3(0.66667,0.66667,0.33333), // dark yellow
+			float3(0,0,0.66667), // dark blue
+			float3(0.66667,0.33333,0.66667), // dark magenta
+			float3(0.33333,0.66667,0.66667), // dark cyan
 			float3(0.76471,0.78039,0.79608), // light gray
-			float3(0.52941,0.54118,0.55686), // dark gray
-			float3(0,0,1), // bright blue
-			float3(0,1,0), // bright green
-			float3(0,1,1), // bright cyan
-			float3(1,0,0), // bright red
-			float3(1,0,1), // bright magenta
-			float3(1,1,0), // bright yellow
+			float3(0.52949,0.54118,0.55686), // dark gray
+			float3(1,0,0), // red
+			float3(0,1,0), // green
+			float3(1,1,0), // yellow
+			float3(0,0,1), // blue
+			float3(1,0,1), // magenta
+			float3(0,1,1), // cyan
 			float3(1,1,1)  // white
 		};
 		switch (palette) {
 		case 2:
 			return float4(NearestPalette16(col, pal_ega), 1);
 		case 3:
-			return float4(NearestPalette16(col, pal_vmware), 1);
+			return float4(NearestPalette16AltOutput(col, pal_vga, pal_vmware), 1);
 		}
 		return float4(NearestPalette16(col, pal_vga), 1);
 	}
-	case 7: // 8 colors
+	case 9: // 8 colors
 	{
-		if (nopal || gray || dither || palette != 2) {
-			col = floor(col * 7.0 + t) / 7.0;
-			if (nopal || gray || palette != 2) {
+		if (gray) {
+			float l = floor(col.x * 7.0 + t) / 7.0;
+			return float4(l, l, l, 1);
+		}
+		if (nopal || dither || palette != 2) {
+			col = floor(col + t);
+			if (nopal || palette != 2) {
 				return float4(col, 1);
 			}
 		}
@@ -466,21 +517,23 @@ float4 PS(VS_OUTPUT input) : SV_TARGET{
 		float3 nc = NearestPalette8(col, pal_uvnc);
 		return float4(nc, 1);
 	}
-	case 8: // 4 colors
+	case 10: // 4 colors
 	{
 		col = floor(col * 3.0 + t) / 3.0;
 		return float4(col, 1);
 	}
-	case 9: // 2 colors
+	case 11: // 2 colors
 	{
 		float c = step(t, col.x);
-		if (palette == 2) { // use monocolor instead of white
-			if (c > 0.5) {
-				int r = monocolor >> 16 & 0xFF;
-				int g = monocolor >> 8 & 0xFF;
-				int b = monocolor & 0xFF;
-				return float4(r / 255.0, g / 255.0, b / 255.0, 1);
+		if (c > 0.5) { // use monocolor instead of white
+			int r = monocolor >> 16 & 0xFF;
+			int g = monocolor >> 8 & 0xFF;
+			int b = monocolor & 0xFF;
+			// use white if too dark
+			if (r + g + b < 72) {
+				return float4(1, 1, 1, 1);
 			}
+			return float4(r / 255.0, g / 255.0, b / 255.0, 1);
 		}
 		return float4(c, c, c, 1);
 	}

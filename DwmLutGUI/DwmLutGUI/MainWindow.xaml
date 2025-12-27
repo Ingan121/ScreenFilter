@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:DwmLutGUI"
         mc:Ignorable="d"
-        Title="ScreenFilterDWM GUI" Height="365" Width="600" MinHeight="200" MinWidth="300">
+        Title="ScreenFilter" Height="365" Width="413" MinHeight="200" MinWidth="300">
     <Window.DataContext>
         <local:MainViewModel />
     </Window.DataContext>
@@ -28,11 +28,13 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Margin="0,0,0,6" Text="Colors" TextAlignment="Right" />
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="Palette" TextAlignment="Right" />
-                <ComboBox x:Name="ToggleKeyCombo" Grid.Row="2" Grid.Column="0" Text="Toggle Key" SelectedItem="{Binding ToggleKey}" />
-                <ComboBox x:Name="ColorCombo" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top" Width="373" Height="22" Margin="6,0,0,4" SelectedIndex="3">
+                <ComboBox x:Name="ToggleKeyCombo" Grid.Row="2" Grid.Column="0" Text="Toggle Key" SelectedItem="{Binding ToggleKey}" Visibility="Hidden" />
+                <ComboBox x:Name="ColorCombo" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center" Width="196" Height="22" Margin="6,0,0,4" SelectedIndex="3">
                     <ComboBoxItem Content="True Color"/>
                     <ComboBoxItem Content="High Color (16-bit)"/>
                     <ComboBoxItem Content="High Color (15-bit)"/>
+                    <ComboBoxItem Content="12-bit Color"/>
+                    <ComboBoxItem Content="10-bit Color"/>
                     <ComboBoxItem Content="256 Colors"/>
                     <ComboBoxItem Content="64 Colors"/>
                     <ComboBoxItem Content="20 Colors"/>
@@ -41,15 +43,16 @@
                     <ComboBoxItem Content="4 Colors"/>
                     <ComboBoxItem Content="Monochrome"/>
                 </ComboBox>
-                <ComboBox x:Name="PalCombo" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center" Width="373" Height="22" Margin="6,0,0,0" Grid.Row="1" SelectedIndex="0">
+                <ComboBox x:Name="PalCombo" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center" Width="196" Height="22" Margin="6,0,0,0" Grid.Row="1" SelectedIndex="0">
                     <ComboBoxItem Content="Default"/>
-                    <ComboBoxItem Content="Grayscale"/>
-                    <ComboBoxItem Content="EGA (16) / UltraVNC Dark (8) / Custom Color (Mono)"/>
+                    <ComboBoxItem Content="Grayscale (Rec. 709)"/>
+                    <ComboBoxItem Content="EGA (16) / UltraVNC Dark (8)"/>
                     <ComboBoxItem Content="VGA Alt (16)"/>
+                    <ComboBoxItem Content="Grayscale (Rec. 601)"/>
                 </ComboBox>
-                <CheckBox x:Name="Dither" Grid.Column="1" Content="Dither" HorizontalAlignment="Left" Margin="385,0,0,0" VerticalAlignment="Center"/>
-                <CheckBox x:Name="Invert" Grid.Column="1" Content="Invert" HorizontalAlignment="Left" Margin="438,0,0,0" VerticalAlignment="Center"/>
-                <CheckBox x:Name="NoPal" Grid.Column="1" Content="Don't use palette" HorizontalAlignment="Left" Margin="385,0,0,0" VerticalAlignment="Center" Grid.Row="1"/>
+                <CheckBox x:Name="Dither" Grid.Column="1" Content="Dither" HorizontalAlignment="Left" Margin="207,0,0,0" VerticalAlignment="Center"/>
+                <CheckBox x:Name="Invert" Grid.Column="1" Content="Invert" HorizontalAlignment="Left" Margin="260,0,0,0" VerticalAlignment="Center"/>
+                <CheckBox x:Name="NoPal" Grid.Column="1" Content="Don't use palette" HorizontalAlignment="Left" Margin="207,0,0,0" VerticalAlignment="Center" Grid.Row="1"/>
                 <Button Grid.Column="1" Content="Set Custom Monochrome Color" HorizontalAlignment="Right" Grid.Row="2" VerticalAlignment="Center" Width="191" Click="SetMonoColorButton_Click"/>
             </Grid>
             <Grid DockPanel.Dock="Bottom">
@@ -69,57 +72,6 @@
                     <DataGridTextColumn Header="Name" Binding="{Binding Name}" IsReadOnly="True" />
                     <DataGridTextColumn Header="Connector" Binding="{Binding Connector}" IsReadOnly="True" />
                     <DataGridTextColumn Header="Position" Binding="{Binding Position}" IsReadOnly="True" />
-                    <DataGridTemplateColumn Header="SDR LUT" Width="*" IsReadOnly="False">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding SdrLutFilename, Mode=OneWay}" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                        <DataGridTemplateColumn.CellEditingTemplate>
-                            <DataTemplate>
-                                <ComboBox ItemsSource="{Binding SdrLuts}" SelectedItem="{Binding SdrLutPath, UpdateSourceTrigger=PropertyChanged}">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellEditingTemplate>
-                    </DataGridTemplateColumn>
-                    <DataGridTemplateColumn>
-                        <DataGridTemplateColumn.HeaderTemplate>
-                            <DataTemplate>
-                                <Button Content="-" Click="RemoveSdrLut_Click" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.HeaderTemplate>
-                    </DataGridTemplateColumn>
-                    <!-- <DataGridTextColumn Header="SDR LUT" Width="*" Binding="{Binding SdrLutFilename}" /> -->
-                    <DataGridTemplateColumn Header="HDR LUT" Width="*" IsReadOnly="False">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding HdrLutFilename, Mode=OneWay}" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                        <DataGridTemplateColumn.CellEditingTemplate>
-                            <DataTemplate>
-                                <ComboBox ItemsSource="{Binding HdrLuts}" SelectedItem="{Binding HdrLutPath, UpdateSourceTrigger=PropertyChanged}">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellEditingTemplate>
-                    </DataGridTemplateColumn>
-                    <DataGridTemplateColumn>
-                        <DataGridTemplateColumn.HeaderTemplate>
-                            <DataTemplate>
-                                <Button Content="-" Click="RemoveHdrLut_Click" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.HeaderTemplate>
-                    </DataGridTemplateColumn>
                 </DataGrid.Columns>
             </DataGrid>
         </DockPanel>
